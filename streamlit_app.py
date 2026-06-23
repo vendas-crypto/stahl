@@ -1,8 +1,9 @@
+# -*- coding: utf-8 -*-
+import os  # <-- Posicionado no topo absoluto para evitar o NameError!
 import streamlit as st
 import pandas as pd
 import base64
 from datetime import datetime, timedelta
-# Importação da conexão nativa com o Google Sheets
 from streamlit_gsheets import GSheetsConnection
 
 # =========================================================================
@@ -10,19 +11,18 @@ from streamlit_gsheets import GSheetsConnection
 # =========================================================================
 st.set_page_config(page_title="STAHL CRM - Sistema Integrado", layout="wide", initial_sidebar_state="expanded")
 
-# Caminhos dos arquivos físicos de mídia (Imagens estáticas simples podem ficar no repositório do GitHub)
+# Caminhos dos arquivos físicos de mídia
 CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
-# Nomes das abas/páginas exatas na sua planilha do Google Sheets na Nuvem
-ABA_ORCAR = "Orçar"
-ABA_ORCADOS = "Orçados"
+# Nomes das abas/páginas sem acentos para o servidor não engasgar
+ABA_ORCAR = "Orcar"
+ABA_ORCADOS = "Orcados"
 ABA_PERDIDOS = "Perdidos"
 
 # =========================================================================
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
 # =========================================================================
-# Cria o conector utilizando as credenciais salvas nos Secrets do Streamlit
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Inicialização segura das variáveis de sessão de login tradicionais
@@ -75,8 +75,7 @@ def somar_dias_uteis(data_inicio, dias):
 # =========================================================================
 def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
     try:
-        # Lê a aba específica diretamente do Google Sheets
-        df = conn.read(worksheet=nome_aba, ttl=0) # ttl=0 força buscar o dado mais recente sem cache
+        df = conn.read(worksheet=nome_aba, ttl=0)
         if df is None or df.empty:
             return pd.DataFrame([])
             
@@ -139,7 +138,6 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
 
 def salvar_dados_na_nuvem(df, nome_aba):
     try:
-        # Envia e atualiza o DataFrame diretamente na nuvem
         conn.update(worksheet=nome_aba, data=df)
     except Exception as e:
         st.error(f"Erro crítico ao salvar dados no Google Sheets: {e}")
@@ -216,7 +214,17 @@ ESTADOS_BR = ["SP", "PR", "MG", "BA", "RJ", "SC", "RS", "PE", "AM", "RN", "PB", 
 LISTA_REPRESENTANTES = ["Meire Queiroz", "Fernando H. Junior", "Eng° Julio Correia", "Eng° Gustavo Swenson", "Daniela Santana", "Eng° Darilton Aguiar", "Haroldo Rezende", "Bruno Castro", "Eng° Mauro Reich", "Eng° Jacson Voit", "Eng° Ozias Winckler", "Ronaldo Silva", "Basílio Oliveira", "S/rep"]
 LISTA_ORCAMENTISTAS_CADASTRO = ["LF", "RS", "JV", "REP", "Não Definido"]
 
-USUARIOS_DB = {"thamires": {"nome": "Thamires Martins", "sigla": "TM", "perfil": "administrador"}}
+# =========================================================================
+# BANCO DE DADOS DE USUÁRIOS E REGRAS DE SEGURANÇA
+# =========================================================================
+USUARIOS_DB = {
+    "thamires": {
+        "nome": "Thamires Martins", 
+        "sigla": "TM", 
+        "perfil": "administrador",
+        "senha": "stahl@2026"
+    }
+}
 
 # =========================================================================
 # BARRA LATERAL
@@ -237,7 +245,7 @@ if not st.session_state['logado']:
 
     if botao_entrar:
         usr = usuario_input.strip().lower()
-        if usr in USUARIOS_DB and senha_input == "stahl@2026":
+        if usr in USUARIOS_DB and senha_input == USUARIOS_DB[usr]["senha"]:
             st.session_state['logado'] = True
             st.session_state['user_info'] = USUARIOS_DB[usr]
             st.rerun()
@@ -286,7 +294,7 @@ if st.session_state['logado']:
 
         rep_vinculado_automatico = "S/rep"
         if orc_resp == "REP":
-            rep_vinculado_automatico = st.selectbox("Qual representante está orçando?:", [r for r in LISTA_REPRESENTANTES if r != "S/rep"])
+            rep_vinculado_automatico = st.selectbox("Qual representative está orçando?:", [r for r in LISTA_REPRESENTANTES if r != "S/rep"])
 
         st.markdown("<br>", unsafe_allow_html=True)
         c4, c5, c6 = st.columns(3)
@@ -327,7 +335,6 @@ if st.session_state['logado']:
                 
                 df_final = pd.concat([df_atual, pd.DataFrame([nova_linha])], ignore_index=True)
                 
-                # Salva na Nuvem
                 salvar_dados_na_nuvem(df_final, ABA_ORCAR)
                 
                 st.session_state['df_orcar'] = df_final
@@ -415,9 +422,7 @@ if st.session_state['logado']:
                                 num_atual += 1
                             st.session_state['proximo_numero_orc'] = num_atual
                             
-                            # Salva Atualização na Nuvem
                             salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
-                            
                             st.session_state['mensagem_sucesso_orcar'] = f"Orçamento Iniciado na Nuvem! {', '.join(lista_numeros_gerados)}"
                             st.rerun()
                         else: st.warning("Selecione um registro na caixinha.")
@@ -431,9 +436,7 @@ if st.session_state['logado']:
                                 if col == 'Orçamentista': val = str(val).strip().upper()
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, col] = val
                         
-                        # Salva Modificações na Nuvem
                         salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
-                        
                         st.session_state['mensagem_sucesso_orcar'] = "Alterações salvas com sucesso no Google Sheets!"
                         st.rerun()
                         
@@ -456,7 +459,6 @@ if st.session_state['logado']:
                                     indices_para_remover.append(id_sol)
                             st.session_state['df_orcar'] = st.session_state['df_orcar'][~st.session_state['df_orcar']['IdSolicitacao'].isin(indices_para_remover)]
                             
-                            # Atualiza as duas abas na Nuvem simultaneamente
                             salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
                             salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
                             
@@ -593,9 +595,7 @@ if st.session_state['logado']:
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Solicitação de Revisão'] = hoje_str
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Prazo Envio Revisão'] = prazo_rev_str
                                 
-                            # Salva na Nuvem
                             salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
-                            
                             st.session_state['mensagem_sucesso_orcados'] = f"Revisão aberta com sucesso na nuvem! Prazo de envio: {prazo_rev_str}"
                             st.rerun()
                         else: st.warning("Selecione um orçamento na caixinha para abrir a revisão.")
@@ -608,9 +608,7 @@ if st.session_state['logado']:
                                 val = row[col]
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, col] = val
                         
-                        # Salva na Nuvem
                         salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
-                        
                         st.session_state['mensagem_sucesso_orcados'] = "Alterações de Orçados salvas com sucesso na nuvem!"
                         st.rerun()
             else:
@@ -652,7 +650,7 @@ if st.session_state['logado']:
                 df_upload = pd.read_excel(up_orcar)
                 salvar_dados_na_nuvem(df_upload, ABA_ORCAR)
                 st.session_state['df_orcar'] = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
-                st.success("Base ativa de Orçar atualizada na nuvem!")
+                st.success("Base activa de Orçar atualizada na nuvem!")
                 st.rerun()
 
             up_orcados = st.file_uploader("2. Forçar Atualização Planilha de ORCADOS:", type=['xlsx'])
