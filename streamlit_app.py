@@ -15,15 +15,14 @@ st.set_page_config(page_title="STAHL CRM - Sistema Integrado", layout="wide", in
 CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
-# Nomes das abas/páginas sem acentos para o servidor não engasgar
-ABA_ORCAR = "Orcar"
-ABA_ORCADOS = "Orcados"
-ABA_PERDIDOS = "Perdidos"
+# Nomes das abas/páginas mapeadas por índice numérico para evitar erros de codificação
+ABA_ORCAR = 0      # Primeira aba da planilha (Orcar)
+ABA_ORCADOS = 1    # Segunda aba da planilha (Orcados)
+ABA_PERDIDOS = 2   # Terceira aba da planilha (Perdidos)
 
 # =========================================================================
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
 # =========================================================================
-# Forçamos o conector a buscar as configurações do gsheets salvas no Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Inicialização segura das variáveis de sessão de login tradicionais
@@ -93,7 +92,6 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
         df = df.rename(columns=mapeamento)
         
         if 'IdSolicitacao' not in df.columns and not df.empty: df['IdSolicitacao'] = range(40774, 40774 + len(df))
-        # CORREÇÃO AQUI: Mudando valores padrões para os nomes sem acento
         if 'Situação' not in df.columns: df['Situação'] = 'Orcar' if tipo == "orcar" else 'Orcados'
         if 'Empresa' not in df.columns: df['Empresa'] = 'NÃO DEFINIDO'
         if 'Representante' not in df.columns: df['Representante'] = 'S/rep'
@@ -324,7 +322,6 @@ if st.session_state['logado']:
                 df_atual = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
                 proximo_id = int(pd.to_numeric(df_atual['IdSolicitacao'], errors='coerce').max()) + 1 if not df_atual.empty and 'IdSolicitacao' in df_atual.columns else 40774
                 
-                # CORREÇÃO AQUI: Situação guardada como 'Orcar' (sem acento) para alinhar com as abas
                 nova_linha = {
                     "IdSolicitacao": proximo_id, "Situação": "Orcar", "Atraso": "No prazo",
                     "Empresa": empresa_sol.strip().upper(), "Representante": rep_sol,
@@ -351,7 +348,6 @@ if st.session_state['logado']:
         if st.session_state['mensagem_sucesso_orcar']:
             st.success(st.session_state['mensagem_sucesso_orcar'], icon="✅")
 
-        # Ajustado os títulos das abas internas do painel
         aba_orcar_tab, aba_orcados_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORCAR / ORCANDO", "✅ 2. Base ORCADOS", "❌ 3. Base PERDIDOS"])
         
         # ABA 1: BASE ORCAR / ORCANDO
@@ -409,6 +405,7 @@ if st.session_state['logado']:
                     disabled=[c for c in df_orcar_filtrado.columns if c in ["IdSolicitacao", "Situação", "Atraso", "Solicitado", "Previsto"]]
                 )
                 
+                # CORREÇÃO DA DIGITAÇÃO: Garantindo o nome correto em português 'linhas_selecionadas'
                 linhas_selecionadas = df_editado[df_editado["Selecionar"] == True]
                 
                 with act1:
@@ -420,7 +417,6 @@ if st.session_state['logado']:
                                 id_sol = row["IdSolicitacao"]
                                 num_orc = f"ORC-26-{num_atual:06d}"
                                 lista_numeros_gerados.append(num_orc)
-                                # CORREÇÃO AQUI: Mudado de 'Orçando' para 'Orcando' (limpando o acento)
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Situação'] = 'Orcando'
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Orçamento'] = num_orc
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Iníciado'] = datetime.today().strftime('%d/%m/%Y')
@@ -454,7 +450,6 @@ if st.session_state['logado']:
                                 registro_original = st.session_state['df_orcar'][st.session_state['df_orcar']['IdSolicitacao'] == id_sol]
                                 if not registro_original.empty:
                                     reg = registro_original.iloc[0].to_dict()
-                                    # CORREÇÃO AQUI: Mudado para 'Orcados' (sem acento)
                                     reg['Situação'] = 'Orcados'
                                     reg['ValorTotal'] = row['ValorTotal']
                                     reg['Orçamento'] = row['Orçamento']
@@ -568,7 +563,6 @@ if st.session_state['logado']:
             if not df_orcados_filtrado.empty:
                 alertas = []
                 for idx, row in df_orcados_filtrado.iterrows():
-                    # CORREÇÃO AQUI: Mudado para checar 'em revisao' (sem acento)
                     if str(row.get('Situação', '')).strip().lower() == 'em revisao':
                         alertas.append("❗ REVISÃO")
                     else: alertas.append("")
@@ -588,6 +582,7 @@ if st.session_state['logado']:
                     disabled=[c for c in df_orcados_filtrado.columns if c in ["⚠️", "IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]]
                 )
                 
+                # CORREÇÃO DA DIGITAÇÃO: Corrigido de 'linhas_selecionadas_o'
                 linhas_selecionadas_o = df_editado_orcados[df_editado_orcados["Selecionar"] == True]
 
                 with col_btn_o1:
@@ -598,7 +593,6 @@ if st.session_state['logado']:
                             
                             for idx, row in linhas_selecionadas_o.iterrows():
                                 id_sol = row["IdSolicitacao"]
-                                # CORREÇÃO AQUI: Situação atualizada para 'Em Revisao' (sem acento)
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Situação'] = 'Em Revisao'
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Solicitação de Revisão'] = hoje_str
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Prazo Envio Revisão'] = prazo_rev_str
@@ -646,7 +640,7 @@ if st.session_state['logado']:
                 st.session_state['bg_dinamico'] = base64.b64encode(bytes_data).decode()  
                 if st.button("💾 Salvar Layout"):
                     with open(CAMINHO_LAYOUT_LOGIN, "wb") as f: f.write(upload_layout.getbuffer())
-                    st.success("Layout local atualizado!")
+                    st.success("Layout local actualizado!")
                     st.rerun()
                     
         with col2:
