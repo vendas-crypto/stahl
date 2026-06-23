@@ -24,7 +24,7 @@ ABA_PERDIDOS = "Perdidos"
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
 # =========================================================================
 # Forçamos o conector a buscar as configurações do gsheets salvas no Secrets
-conn = st.connection("gsheets", type=GSheetsConnection, connection_name="gsheets")
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Inicialização segura das variáveis de sessão de login tradicionais
 if 'logado' not in st.session_state: 
