@@ -15,9 +15,10 @@ st.set_page_config(page_title="STAHL CRM - Sistema Integrado", layout="wide", in
 CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
-# Nomes exatos das abas de texto no Google Sheets (Evita HTTP Error 400 por índices numéricos)
+# Nomes exatos das abas de texto no Google Sheets (Configure exatamente igual no Drive)
 ABA_ORCAR = "Orcar"
 ABA_ORCADOS = "Orcados"
+ABA_REVISAO = "Revisao"
 ABA_PERDIDOS = "Perdidos"
 
 # Dicionário de Tradução Visual para o usuário final do time STAHL
@@ -25,6 +26,7 @@ TRADUCAO_SITUACAO = {
     "Orcar": "Orçar",
     "Orcando": "Orçando",
     "Orcados": "Orçados",
+    "Revisao": "Em Revisão",
     "Perdidos": "Perdidos"
 }
 REVERSO_SITUACAO = {v: k for k, v in TRADUCAO_SITUACAO.items()}
@@ -45,6 +47,8 @@ if 'mensagem_sucesso_orcar' not in st.session_state:
     st.session_state['mensagem_sucesso_orcar'] = None
 if 'mensagem_sucesso_orcados' not in st.session_state: 
     st.session_state['mensagem_sucesso_orcados'] = None
+if 'mensagem_sucesso_revisao' not in st.session_state: 
+    st.session_state['mensagem_sucesso_revisao'] = None
 if 'exibir_dash_orcados' not in st.session_state:
     st.session_state['exibir_dash_orcados'] = False
 
@@ -59,6 +63,10 @@ if 'filtro_orc_orcados' not in st.session_state: st.session_state['filtro_orc_or
 if 'filtro_rep_orcados' not in st.session_state: st.session_state['filtro_rep_orcados'] = []
 if 'filtro_item_orcados' not in st.session_state: st.session_state['filtro_item_orcados'] = []
 if 'busca_empresa_orcados' not in st.session_state: st.session_state['busca_empresa_orcados'] = ""
+
+# Filtros e controles sequenciais (Aba Revisão)
+if 'filtro_orc_revisao' not in st.session_state: st.session_state['filtro_orc_revisao'] = []
+if 'busca_empresa_revisao' not in st.session_state: st.session_state['busca_empresa_revisao'] = ""
 
 if 'proximo_numero_orc' not in st.session_state: st.session_state['proximo_numero_orc'] = 66800
 
@@ -85,10 +93,7 @@ def somar_dias_uteis(data_inicio, dias):
 def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
     try:
         df = conn.read(worksheet=nome_aba, ttl=0)
-        colunas_obrigatorias = ['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso']
-        
-        if tipo == "orcados":
-            colunas_obrigatorias += ['Orçamento', 'Solicitado', 'Previsto', 'Iníciado', 'Enviado', 'Solicitação de Revisão', 'Prazo Envio Revisão']
+        colunas_obrigatorias = ['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso', 'Orçamento', 'Rev', 'Solicitado', 'Iníciado', 'Previsto', 'Enviado']
         
         if df is None or df.empty:
             return pd.DataFrame(columns=colunas_obrigatorias)
@@ -104,11 +109,12 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
             if 'empresa' in col_lower or 'cliente' in col_lower: mapeamento[col] = 'Empresa'
             if 'representante' in col_lower or 'rep' in col_lower: mapeamento[col] = 'Representante'
             if 'item' in col_lower or 'equipamento' in col_lower: mapeamento[col] = 'Item'
+            if 'rev' in col_lower: mapeamento[col] = 'Rev'
         df = df.rename(columns=mapeamento)
         
         for obrigatoria in colunas_obrigatorias:
             if obrigatoria not in df.columns:
-                df[obrigatoria] = 0.0 if obrigatoria == 'ValorTotal' else 'None'
+                df[obrigatoria] = 0 if obrigatoria == 'Rev' else (0.0 if obrigatoria == 'ValorTotal' else 'None')
         
         if 'IdSolicitacao' not in df.columns and not df.empty: df['IdSolicitacao'] = range(40774, 40774 + len(df))
         if 'Situação' not in df.columns: df['Situação'] = 'Orcar' if tipo == "orcar" else 'Orcados'
@@ -122,8 +128,6 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
             df['Orçamentista'] = 'Não Definido'
         
         if tipo == "orcar" and not df.empty:
-            if 'Orçamento' not in df.columns: df['Orçamento'] = 'None'
-            
             hoje = datetime.today().date()
             atrasos_calculados = []
             for idx, row in df.iterrows():
@@ -141,35 +145,33 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
                 except Exception: atrasos_calculados.append("No prazo")
             df['Atraso'] = atrasos_calculados
 
-        if tipo == "orcados" and not df.empty:
-            if 'Solicitação de Revisão' not in df.columns: df['Solicitação de Revisão'] = 'None'
-            if 'Prazo Envio Revisão' not in df.columns: df['Prazo Envio Revisão'] = 'None'
-
         for col in df.columns:
-            if col in ['Solicitado', 'Previsto', 'Iníciado', 'Enviado', 'Solicitação de Revisão', 'Prazo Envio Revisão']:
+            if col in ['Solicitado', 'Previsto', 'Iníciado', 'Enviado']:
                 df[col] = df[col].astype(str).str.replace(' 00:00:00', '', regex=False).replace('nan', 'None').replace('NaT', 'None')
         return df
     except Exception as e: 
         st.error(f"Erro ao processar dados da nuvem ({nome_aba}): {e}")
-        return pd.DataFrame(columns=['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso'])
+        return pd.DataFrame(columns=['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso', 'Orçamento', 'Rev', 'Solicitado', 'Iníciado', 'Previsto', 'Enviado'])
 
 def salvar_dados_na_nuvem(df, nome_aba):
     try:
         df_salvar = df.copy()
         if 'Situação' in df_salvar.columns:
             df_salvar['Situação'] = df_salvar['Situação'].map(lambda x: REVERSO_SITUACAO.get(str(x).strip(), x))
-        # Remove colunas auxiliares que não pertencem ao arquivo bruto do Sheets
+        # Remove colunas auxiliares dinâmicas que pertencem estritamente à interface visual
         if "Selecionar" in df_salvar.columns: del df_salvar["Selecionar"]
         if "⚠️" in df_salvar.columns: del df_salvar["⚠️"]
         conn.update(worksheet=nome_aba, data=df_salvar)
     except Exception as e:
         st.error(f"Erro crítico ao salvar dados no Google Sheets: {e}")
 
-# Leitura inicial das bases de dados (Unificada 100% via Nuvem)
+# Leitura inicial das bases de dados (Unificada 100% via Nuvem com 4 bases)
 if 'df_orcar' not in st.session_state or st.session_state['df_orcar'].empty:
     st.session_state['df_orcar'] = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
 if 'df_orcados' not in st.session_state or st.session_state['df_orcados'].empty:
     st.session_state['df_orcados'] = carregar_dados_da_nuvem(ABA_ORCADOS, "orcados")
+if 'df_revisao' not in st.session_state or st.session_state['df_revisao'].empty:
+    st.session_state['df_revisao'] = carregar_dados_da_nuvem(ABA_REVISAO, "revisao")
 if 'df_perdidos' not in st.session_state or st.session_state['df_perdidos'].empty:
     st.session_state['df_perdidos'] = carregar_dados_da_nuvem(ABA_PERDIDOS, "perdidos")
 
@@ -371,7 +373,7 @@ if st.session_state['logado']:
         if st.session_state['mensagem_sucesso_orcar']:
             st.success(st.session_state['mensagem_sucesso_orcar'], icon="✅")
 
-        aba_orcar_tab, aba_orcados_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORCADOS", "❌ 3. Base PERDIDOS"])
+        aba_orcar_tab, aba_orcados_tab, aba_revisao_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORCADOS", "🔄 3. Base EM REVISÃO", "❌ 4. Base PERDIDOS"])
         
         # ABA 1: BASE ORÇAR / ORÇANDO
         with aba_orcar_tab:
@@ -413,7 +415,7 @@ if st.session_state['logado']:
                 if st.session_state['busca_empresa_atual'] and 'Empresa' in df_orcar_filtrado.columns: 
                     df_orcar_filtrado = df_orcar_filtrado[df_orcar_filtrado['Empresa'].astype(str).str.contains(st.session_state['busca_empresa_atual'], case=False, na=False)]
             
-            st.markdown("<div class='section-header'>⚙️ Ações</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-header'>⚙️ Ações Base Orçar</div>", unsafe_allow_html=True)
             
             if not df_orcar_filtrado.empty:
                 # TRAVA DE SEGURANÇA CONTRA DUPLICAÇÃO DE COLUNA NO RERUN (Evita StreamlitAPIException)
@@ -432,7 +434,7 @@ if st.session_state['logado']:
                 linhas_selecionadas = df_editado[df_editado["Selecionar"] == True]
                 
                 with act1:
-                    if st.button("🚀 Iniciar"):
+                    if st.button("🚀 Iniciar Orçamento", key="btn_iniciar_proposta"):
                         if not linhas_selecionadas.empty:
                             num_atual = int(st.session_state['proximo_numero_orc'])
                             lista_numeros_gerados = []
@@ -490,7 +492,7 @@ if st.session_state['logado']:
                             st.rerun()
                         else: st.warning("Selecione um registro na caixinha.")
 
-        # ABA 2: BASE ORÇADOS 
+        # ABA 2: BASE ORÇADOS
         with aba_orcados_tab:
             if st.session_state['mensagem_sucesso_orcados']:
                 st.success(st.session_state['mensagem_sucesso_orcados'], icon="✅")
@@ -499,155 +501,135 @@ if st.session_state['logado']:
             df_orcados_raw = st.session_state['df_orcados'].copy() if 'df_orcados' in st.session_state and not st.session_state['df_orcados'].empty else pd.DataFrame([])
 
             st.markdown("<div class='section-header'>🔍 Filtros da Carteira de Orçados</div>", unsafe_allow_html=True)
-            fo1, fo2, fo3 = st.columns(3)
+            fo1, fo2 = st.columns(2)
             with fo1:
                 try:
-                    opcoes_orc_o = sorted([str(x).upper().strip() for x in df_orcados_raw['Orçamentista'].dropna().unique() if str(x).lower() != 'nan']) if not df_orcados_raw.empty else []
-                except Exception: opcoes_orc_o = []
-                st.session_state['filtro_orc_orcados'] = st.multiselect("Filtrar por Orçamentista (Orçados):", opcoes_orc_o, default=st.session_state['filtro_orc_orcados'], placeholder="Selecione os orçamentistas...", key="mult_orc_o")
+                    op_orc = sorted([str(x) for x in df_orcados_raw['Orçamentista'].dropna().unique()])
+                    st.session_state['filtro_orc_orcados'] = st.multiselect("Filtrar Orçamentista:", op_orc, default=st.session_state['filtro_orc_orcados'], key="f_orc_o_sel")
+                except Exception: pass
             with fo2:
                 try:
-                    opcoes_rep_o = sorted([str(x).strip() for x in df_orcados_raw['Representante'].dropna().unique() if str(x).lower() != 'nan']) if not df_orcados_raw.empty else []
-                except Exception: opcoes_rep_o = []
-                st.session_state['filtro_rep_orcados'] = st.multiselect("Filtrar por Representante (Orçados):", opcoes_rep_o, default=st.session_state['filtro_rep_orcados'], placeholder="Selecione os representantes...", key="mult_rep_o")
-            with fo3:
-                try:
-                    opcoes_item_o = sorted([str(x).strip() for x in df_orcados_raw['Item'].dropna().unique() if str(x).lower() != 'nan']) if not df_orcados_raw.empty else []
-                except Exception: opcoes_item_o = []
-                st.session_state['filtro_item_orcados'] = st.multiselect("Filtrar por Item (Orçados):", opcoes_item_o, default=st.session_state['filtro_item_orcados'], placeholder="Selecione os itens...", key="mult_item_o")
+                    op_rep = sorted([str(x) for x in df_orcados_raw['Representante'].dropna().unique()])
+                    st.session_state['filtro_rep_orcados'] = st.multiselect("Filtrar Representante:", op_rep, default=st.session_state['filtro_rep_orcados'], key="f_rep_o_sel")
+                except Exception: pass
+            
+            if st.session_state['filtro_orc_orcados']: df_orcados_raw = df_orcados_raw[df_orcados_raw['Orçamentista'].isin(st.session_state['filtro_orc_orcados'])]
+            if st.session_state['filtro_rep_orcados']: df_orcados_raw = df_orcados_raw[df_orcados_raw['Representante'].isin(st.session_state['filtro_rep_orcados'])]
+
+            st.markdown("<div class='section-header'>⚙️ Ações da Base de Orçados</div>", unsafe_allow_html=True)
+            if not df_orcados_raw.empty:
+                if "Selecionar" not in df_orcados_raw.columns: 
+                    df_orcados_raw.insert(0, "Selecionar", False)
                 
-            st.session_state['busca_empresa_orcados'] = st.text_input("⌨️ Pesquisar Empresa em Orçados:", value=st.session_state['busca_empresa_orcados'], key="txt_emp_o")
-
-            df_orcados_filtrado = df_orcados_raw.copy()
-            if not df_orcados_filtrado.empty:
-                if st.session_state['filtro_orc_orcados']:
-                    df_orcados_filtrado = df_orcados_filtrado[df_orcados_filtrado['Orçamentista'].astype(str).str.upper().str.strip().isin(st.session_state['filtro_orc_orcados'])]
-                if st.session_state['filtro_rep_orcados']:
-                    df_orcados_filtrado = df_orcados_filtrado[df_orcados_filtrado['Representante'].astype(str).str.strip().isin(st.session_state['filtro_rep_orcados'])]
-                if st.session_state['filtro_item_orcados']:
-                    df_orcados_filtrado = df_orcados_filtrado[df_orcados_filtrado['Item'].astype(str).str.strip().isin(st.session_state['filtro_item_orcados'])]
-                if st.session_state['busca_empresa_orcados']:
-                    df_orcados_filtrado = df_orcados_filtrado[df_orcados_filtrado['Empresa'].astype(str).str.contains(st.session_state['busca_empresa_orcados'], case=False, na=False)]
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("📊 Abrir / Fechar Dashboard de Performance", key="btn_toggle_dash"):
-                st.session_state['exibir_dash_orcados'] = not st.session_state['exibir_dash_orcados']
-                st.rerun()
-
-            if st.session_state['exibir_dash_orcados'] and not df_orcados_filtrado.empty:
-                st.markdown("<div style='background-color: #F1F3F5; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-                st.markdown("### 📊 Indicadores de Performance - Filtrados")
+                # SEGURO CONTRA ERRO DE COLUNAS AUSENTES NO DISABLED
+                colunas_bloqueadas_orcados = [c for c in ["IdSolicitacao", "Situação", "Orçamento", "Rev"] if c in df_orcados_raw.columns]
+                df_ed_o = st.data_editor(df_orcados_raw, key="ed_orcados_tabela", hide_index=True, use_container_width=True, disabled=colunas_bloqueadas_orcados)
                 
-                c_dash1, c_dash2 = st.columns(2)
-                with c_dash1:
-                    data_de = st.date_input("De:", datetime.today().date() - timedelta(days=30), key="dash_dt_de")
-                with c_dash2:
-                    data_ate = st.date_input("Até:", datetime.today().date(), key="dash_dt_ate")
-
-                df_dash = df_orcados_filtrado.copy()
-                df_dash['Enviado_DT'] = pd.to_datetime(df_dash['Enviado'], errors='coerce').dt.date
-                df_dash = df_dash[(df_dash['Enviado_DT'] >= data_de) & (df_dash['Enviado_DT'] <= data_ate)]
-
-                if not df_dash.empty:
-                    total_enviados = len(df_dash)
-                    no_prazo = 0
-                    antecipado = 0
-                    atrasado = 0
-                    
-                    for idx, r in df_dash.iterrows():
-                        try:
-                            dt_prev_raw = pd.to_datetime(r['Previsto'], errors='coerce')
-                            dt_prev = dt_prev_raw.date() if pd.notna(dt_prev_raw) else None
-                            dt_env = r['Enviado_DT']
-                            
-                            if dt_prev and dt_env:
-                                if dt_env == dt_prev: no_prazo += 1
-                                elif dt_env < dt_prev: antecipado += 1
-                                else: atrasado += 1
-                            else: no_prazo += 1 
-                        except Exception: no_prazo += 1
-
-                    m1, m2, m3, m4 = st.columns(4)
-                    with m1:
-                        st.markdown(f"<div class='metric-card'><p style='color:#00205B; margin:0; font-weight:bold;'>Total Enviados</p><h2 style='margin:5px 0;'>{total_enviados}</h2><span style='font-size:12px; color:gray;'>No período filtrado</span></div>", unsafe_allow_html=True)
-                    with m2:
-                        pct_ant = (antecipado / total_enviados) * 100 if total_enviados > 0 else 0
-                        st.markdown(f"<div class='metric-card' style='border-left-color: #28A745;'><p style='color:#28A745; margin:0; font-weight:bold;'>🚀 Antecipados</p><h2 style='margin:5px 0;'>{antecipado}</h2><span style='font-size:13px; font-weight:bold;'>{pct_ant:.1f}%</span></div>", unsafe_allow_html=True)
-                    with m3:
-                        pct_prazo = (no_prazo / total_enviados) * 100 if total_enviados > 0 else 0
-                        st.markdown(f"<div class='metric-card' style='border-left-color: #17A2B8;'><p style='color:#17A2B8; margin:0; font-weight:bold;'>⏱️ No Prazo</p><h2 style='margin:5px 0;'>{no_prazo}</h2><span style='font-size:13px; font-weight:bold;'>{pct_prazo:.1f}%</span></div>", unsafe_allow_html=True)
-                    with m4:
-                        pct_atr = (atrasado / total_enviados) * 100 if total_enviados > 0 else 0
-                        st.markdown(f"<div class='metric-card' style='border-left-color: #DC3545;'><p style='color:#DC3545; margin:0; font-weight:bold;'>⚠️ Atrasados</p><h2 style='margin:5px 0;'>{atrasado}</h2><span style='font-size:13px; font-weight:bold;'>{pct_atr:.1f}%</span></div>", unsafe_allow_html=True)
-                else:
-                    st.info("Nenhum orçamento enviado com esse critério no intervalo selecionado.")
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            if not df_orcados_filtrado.empty:
-                # TRAVA DE SEGURANÇA COMPLEMENTAR: Injeta os alertas e caixas apenas se não existirem
-                if "⚠️" not in df_orcados_filtrado.columns:
-                    alertas = []
-                    for idx, row in df_orcados_filtrado.iterrows():
-                        if str(row.get('Situação', '')).strip() == 'Em Revisão':
-                            alertas.append("❗ REVISÃO")
-                        else: alertas.append("")
-                    df_orcados_filtrado.insert(0, "⚠️", alertas)
-
-                if "Selecionar" not in df_orcados_filtrado.columns:
-                    df_orcados_filtrado.insert(0, "Selecionar", False)
-
-                st.markdown("<div class='section-header'>⚙️ Ações da Base de Orçados</div>", unsafe_allow_html=True)
-                col_btn_o1, col_btn_o2 = st.columns([1, 1])
-                
-                # Lista limpa das colunas de texto travadas sem caracteres problemáticos
-                colunas_bloqueadas = ["⚠️", "IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]
-                
-                df_editado_orcados = st.data_editor(
-                    df_orcados_filtrado,
-                    key="editor_orcados_real",
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=[c for c in df_orcados_filtrado.columns if c in colunas_bloqueadas]
-                )
-                
-                linhas_selecionadas_o = df_editado_orcados[df_editado_orcados["Selecionar"] == True]
-
-                with col_btn_o1:
-                    if st.button("🔄 Abrir Revisão de Proposta", key="btn_abrir_rev"):
-                        if not linhas_selecionadas_o.empty:
-                            hoje_str = datetime.today().strftime('%d/%m/%Y')
-                            prazo_rev_str = somar_dias_uteis(datetime.today(), 2).strftime('%d/%m/%Y')
-                            
-                            for idx, row in linhas_selecionadas_o.iterrows():
-                                id_sol = row["IdSolicitacao"]
-                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Situação'] = 'Em Revisão'
-                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Solicitação de Revisão'] = hoje_str
-                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Prazo Envio Revisão'] = prazo_rev_str
-                                
-                            salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
-                            st.session_state['mensagem_sucesso_orcados'] = f"Revisão aberta com sucesso na nuvem! Prazo de envio: {prazo_rev_str}"
-                            st.rerun()
-                        else: st.warning("Selecione um orçamento na caixinha para abrir a revisão.")
-
-                with col_btn_o2:
-                    if st.button("💾 Salvar Modificações de Valores/Campos", key="btn_salvar_o"):
-                        for idx, row in df_editado_orcados.iterrows():
-                            id_sol = row["IdSolicitacao"]
-                            for col in [c for c in df_editado_orcados.columns if c not in ["Selecionar", "⚠️"]]:
-                                val = row[col]
-                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, col] = val
-                        
+                c_sv, c_rv = st.columns(2)
+                with c_sv:
+                    if st.button("💾 Salvar Modificações de Valores", key="btn_save_val_o"):
+                        for idx, row in df_ed_o.iterrows():
+                            st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == row['IdSolicitacao'], 'ValorTotal'] = row['ValorTotal']
                         salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
-                        st.session_state['mensagem_sucesso_orcados'] = "Alterações de Orçados salvas com sucesso na nuvem!"
+                        st.success("Modificações financeiras salvas com sucesso!")
                         st.rerun()
+                with c_rv:
+                    if st.button("🔄 Revisar Orçamento Selecionado", key="btn_rev_open_flow"):
+                        sel_o = df_ed_o[df_ed_o["Selecionar"] == True]
+                        if not sel_o.empty:
+                            for idx, row in sel_o.iterrows():
+                                reg = st.session_state['df_orcados'][st.session_state['df_orcados']['IdSolicitacao'] == row['IdSolicitacao']].iloc[0].to_dict()
+                                
+                                # Acionamento das Regras de Negócio Enxutas de Revisão da Thamires
+                                reg['Situação'] = 'Revisao'
+                                reg['Solicitado'] = datetime.today().strftime('%d/%m/%Y')  # Editável na tabela caso seja retroativo
+                                reg['Iníciado'] = datetime.today().strftime('%d/%m/%Y')    # Editável na tabela técnica
+                                reg['Previsto'] = somar_dias_uteis(datetime.today(), 2).strftime('%d/%m/%Y')  # +2 dias úteis padrão calculados
+                                
+                                st.session_state['df_revisao'] = pd.concat([st.session_state['df_revisao'], pd.DataFrame([reg])], ignore_index=True)
+                            
+                            st.session_state['df_orcados'] = st.session_state['df_orcados'][~st.session_state['df_orcados']['IdSolicitacao'].isin(sel_o['IdSolicitacao'])]
+                            salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
+                            salvar_dados_na_nuvem(st.session_state['df_revisao'], ABA_REVISAO)
+                            st.rerun()
+                        else: st.warning("Selecione uma proposta comercial para iniciar o processo de revisão.")
             else:
                 st.info("Planilha 'Orçados' na nuvem vazia ou nenhum dado corresponde aos filtros.")
 
-        # ABA 3: BASE PERDIDOS
+        # ABA 3: BASE EM REVISÃO (RECONSTRUÇÃO DA INTERFACE ENXUTA E TOTALMENTE EDITÁVEL SOLICITADA!)
+        with aba_revisao_tab:
+            if st.session_state['mensagem_sucesso_revisao']:
+                st.success(st.session_state['mensagem_sucesso_revisao'])
+                st.session_state['mensagem_sucesso_revisao'] = None
+                
+            df_r = st.session_state['df_revisao'].copy()
+            if not df_r.empty:
+                st.markdown("<div class='section-header'>🔍 Filtros Rápidos da Fila de Revisões</div>", unsafe_allow_html=True)
+                op_orc_r = sorted([str(x) for x in df_r['Orçamentista'].dropna().unique()])
+                st.session_state['filtro_orc_revisao'] = st.multiselect("Filtrar por Orçamentista Técnico:", op_orc_r, default=st.session_state['filtro_orc_revisao'])
+                if st.session_state['filtro_orc_revisao']: 
+                    df_r = df_r[df_r['Orçamentista'].isin(st.session_state['filtro_orc_revisao'])]
+
+                if "Selecionar" not in df_r.columns: 
+                    df_r.insert(0, "Selecionar", False)
+                
+                # Exibição estrita dos campos essenciais mapeados no seu fluxo comercial limpo (Sem ValorTotal para não poluir)
+                colunas_limpas = ["Selecionar", "Situação", "Orçamento", "Rev", "Orçamentista", "Empresa", "Representante", "Solicitado", "Iníciado", "Previsto", "IdSolicitacao"]
+                df_r_view = df_r[[col for col in colunas_limpas if col in df_r.columns]]
+                
+                st.markdown("<div class='section-header'>⚙️ Painel Técnico de Controle de Revisões Ativas</div>", unsafe_allow_html=True)
+                
+                # SEGURO CONTRA ERRO DE COLUNAS AUSENTES NO DISABLED DO EDITOR DE REVISÃO
+                colunas_bloqueadas_revisao = [c for c in ["Situação", "Orçamento", "IdSolicitacao"] if c in df_r_view.columns]
+                
+                df_ed_r = st.data_editor(
+                    df_r_view,
+                    key="ed_revisao_tabela_real",
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=colunas_bloqueadas_revisao,
+                    column_config={
+                        "Solicitado": st.column_config.TextColumn("Data Solicitação (E-mail)"),
+                        "Iníciado": st.column_config.TextColumn("Data Início (Clique)"),
+                        "Previsto": st.column_config.TextColumn("Previsão de Envio")
+                    }
+                )
+                
+                if st.button("📨 Enviar Revisão", key="btn_submit_rev_Stahl"):
+                    sel_r = df_ed_r[df_ed_r["Selecionar"] == True]
+                    if not sel_r.empty:
+                        for idx, row in sel_r.iterrows():
+                            linha_view = df_ed_r[df_ed_r['IdSolicitacao'] == row['IdSolicitacao']].iloc[0].to_dict()
+                            linha_original = st.session_state['df_revisao'][st.session_state['df_revisao']['IdSolicitacao'] == row['IdSolicitacao']].iloc[0].to_dict()
+                            
+                            # Consolida os dados e as datas que você alterou manualmente na tabela
+                            linha_original.update(linha_view)
+                            linha_original['Situação'] = 'Orçados'
+                            linha_original['Enviado'] = datetime.today().strftime('%d/%m/%Y')  # Sobrescreve com a data atualizada de envio da última revisão
+                            
+                            # Incrementador automático inteligente de revisões (Rev + 1)
+                            try: 
+                                linha_original['Rev'] = int(float(linha_original.get('Rev', 0))) + 1
+                            except Exception: 
+                                linha_original['Rev'] = 1
+                            
+                            st.session_state['df_orcados'] = pd.concat([st.session_state['df_orcados'], pd.DataFrame([linha_original])], ignore_index=True)
+                        
+                        st.session_state['df_revisao'] = st.session_state['df_revisao'][~st.session_state['df_revisao']['IdSolicitacao'].isin(sel_r['IdSolicitacao'])]
+                        salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
+                        salvar_dados_na_nuvem(st.session_state['df_revisao'], ABA_REVISAO)
+                        st.session_state['mensagem_sucesso_revisao'] = "Revisão consolidada com sucesso! Proposta retornou atualizada para a carteira de Orçados."
+                        st.rerun()
+                    else: st.warning("Selecione um registro na caixinha para finalizar a revisão.")
+            else: 
+                st.info("Excelente! Não há nenhuma revisão pendente na fila técnica no momento.")
+
+        # ABA 4: BASE PERDIDOS
         with aba_perdidos_tab:
             if 'df_perdidos' in st.session_state and not st.session_state['df_perdidos'].empty: 
                 st.dataframe(st.session_state['df_perdidos'], use_container_width=True)
-            else: st.info("Planilha 'Perdidos' na nuvem vazia.")
+            else: 
+                st.info("Planilha 'Perdidos' na nuvem vazia.")
 
     # --- CONFIGURAÇÃO ---
     elif menu == "⚙️ Configurações":
@@ -687,7 +669,7 @@ if st.session_state['logado']:
                 df_upload = pd.read_excel(up_orcados)
                 salvar_dados_na_nuvem(df_upload, ABA_ORCADOS)
                 st.session_state['df_orcados'] = carregar_dados_da_nuvem(ABA_ORCADOS, "orcados")
-                st.success("Base de Orçados atualizada na nuvem!")
+                st.success("Base de Orçados updated!")
                 st.rerun()
 
             up_perdidos = st.file_uploader("3. Forçar Atualização Planilha de PERDIDOS:", type=['xlsx'])
