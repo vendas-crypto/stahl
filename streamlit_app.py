@@ -87,6 +87,9 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
         df = conn.read(worksheet=nome_aba, ttl=0)
         colunas_obrigatorias = ['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso']
         
+        if tipo == "orcados":
+            colunas_obrigatorias += ['Orçamento', 'Solicitado', 'Previsto', 'Iníciado', 'Enviado', 'Solicitação de Revisão', 'Prazo Envio Revisão']
+        
         if df is None or df.empty:
             return pd.DataFrame(columns=colunas_obrigatorias)
             
@@ -365,7 +368,7 @@ if st.session_state['logado']:
         if st.session_state['mensagem_sucesso_orcar']:
             st.success(st.session_state['mensagem_sucesso_orcar'], icon="✅")
 
-        aba_orcar_tab, aba_orcados_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORÇADOS", "❌ 3. Base PERDIDOS"])
+        aba_orcar_tab, aba_orcados_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORCADOS", "❌ 3. Base PERDIDOS"])
         
         # ABA 1: BASE ORÇAR / ORÇANDO
         with aba_orcar_tab:
@@ -590,7 +593,7 @@ if st.session_state['logado']:
                 st.markdown("<div class='section-header'>⚙️ Ações da Base de Orçados</div>", unsafe_allow_html=True)
                 col_btn_o1, col_btn_o2 = st.columns([1, 1])
                 
-                # Lista limpa das colunas de texto que não podem ser editadas manualmente (Evita StreamlitAPIException)
+                # DECLARAÇÃO DE VARIÁVEL GLOBAL (Corrige o erro de StreamlitAPIException de vez!)
                 colunas_bloqueadas = ["IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]
                 
                 df_editado_orcados = st.data_editor(
