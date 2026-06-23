@@ -15,10 +15,10 @@ st.set_page_config(page_title="STAHL CRM - Sistema Integrado", layout="wide", in
 CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
-# Nomes das abas/páginas mapeadas por índice numérico para evitar erros de codificação
-ABA_ORCAR = 0      # Primeira aba da planilha (Orcar)
-ABA_ORCADOS = 1    # Segunda aba da planilha (Orcados)
-ABA_PERDIDOS = 2   # Terceira aba da planilha (Perdidos)
+# Nomes exatos das abas de texto (idênticos ao Google Sheets para evitar HTTP 400/404)
+ABA_ORCAR = "Orcar"
+ABA_ORCADOS = "Orcados"
+ABA_PERDIDOS = "Perdidos"
 
 # =========================================================================
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
@@ -76,26 +76,32 @@ def somar_dias_uteis(data_inicio, dias):
 def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
     try:
         df = conn.read(worksheet=nome_aba, ttl=0)
+        
+        # Criação blindada caso a aba esteja vazia para evitar quebras em cascata
+        colunas_obrigatorias = ['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso']
         if df is None or df.empty:
-            return pd.DataFrame([])
+            return pd.DataFrame(columns=colunas_obrigatorias)
             
         df.columns = df.columns.astype(str).str.strip()
         
         mapeamento = {}
         for col in df.columns:
-            if col.lower() in ['orçamentista', 'orcamentista']: mapeamento[col] = 'Orçamentista'
-            if col.lower() in ['idsolicitacao', 'id_solicitacao', 'id']: mapeamento[col] = 'IdSolicitacao'
-            if col.lower() in ['situação', 'situacao', 'status']: mapeamento[col] = 'Situação'
-            if col.lower() in ['empresa', 'cliente']: mapeamento[col] = 'Empresa'
-            if col.lower() in ['representante', 'rep']: mapeamento[col] = 'Representante'
-            if col.lower() in ['item', 'equipamento']: mapeamento[col] = 'Item'
+            col_lower = col.lower()
+            if 'orçamentista' in col_lower or 'orcamentista' in col_lower: mapeamento[col] = 'Orçamentista'
+            if 'idsolicitacao' in col_lower or 'id_solicitacao' in col_lower or col_lower == 'id': mapeamento[col] = 'IdSolicitacao'
+            if 'situação' in col_lower or 'situacao' in col_lower or 'status' in col_lower: mapeamento[col] = 'Situação'
+            if 'empresa' in col_lower or 'cliente' in col_lower: mapeamento[col] = 'Empresa'
+            if 'representante' in col_lower or 'rep' in col_lower: mapeamento[col] = 'Representante'
+            if 'item' in col_lower or 'equipamento' in col_lower: mapeamento[col] = 'Item'
         df = df.rename(columns=mapeamento)
+        
+        # Injeção segura de colunas ausentes na estrutura convertida
+        for obrigatoria in colunas_obrigatorias:
+            if obrigatoria not in df.columns:
+                df[obrigatoria] = 0.0 if obrigatoria == 'ValorTotal' else 'None'
         
         if 'IdSolicitacao' not in df.columns and not df.empty: df['IdSolicitacao'] = range(40774, 40774 + len(df))
         if 'Situação' not in df.columns: df['Situação'] = 'Orcar' if tipo == "orcar" else 'Orcados'
-        if 'Empresa' not in df.columns: df['Empresa'] = 'NÃO DEFINIDO'
-        if 'Representante' not in df.columns: df['Representante'] = 'S/rep'
-        if 'Item' not in df.columns: df['Item'] = 'Componentes'
         
         if 'Orçamentista' in df.columns:
             df['Orçamentista'] = df['Orçamentista'].astype(str).str.strip().str.upper().replace('NAN', 'Não Definido')
@@ -104,14 +110,12 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
         
         if tipo == "orcar" and not df.empty:
             if 'Orçamento' not in df.columns: df['Orçamento'] = 'None'
-            if 'ValorTotal' not in df.columns: df['ValorTotal'] = 0.0
-            if 'Atraso' not in df.columns: df['Atraso'] = 'No prazo'
             
             hoje = datetime.today().date()
             atrasos_calculados = []
             for idx, row in df.iterrows():
                 try:
-                    if 'Previsto' in df.columns and pd.notna(row['Previsto']):
+                    if 'Previsto' in df.columns and pd.notna(row['Previsto']) and str(row['Previsto']) != 'None':
                         data_prev_str = str(row['Previsto']).split(' ')[0]
                         if '/' in data_prev_str: data_prev = datetime.strptime(data_prev_str, '%d/%m/%Y').date()
                         else: data_prev = pd.to_datetime(data_prev_str).date()
@@ -134,7 +138,7 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
         return df
     except Exception as e: 
         st.error(f"Erro ao processar dados da nuvem ({nome_aba}): {e}")
-        return pd.DataFrame([])
+        return pd.DataFrame(columns=['IdSolicitacao', 'Situação', 'Empresa', 'Representante', 'Item', 'Orçamentista', 'ValorTotal', 'Atraso'])
 
 def salvar_dados_na_nuvem(df, nome_aba):
     try:
@@ -405,7 +409,7 @@ if st.session_state['logado']:
                     disabled=[c for c in df_orcar_filtrado.columns if c in ["IdSolicitacao", "Situação", "Atraso", "Solicitado", "Previsto"]]
                 )
                 
-                # CORREÇÃO DA DIGITAÇÃO: Garantindo o nome correto em português 'linhas_selecionadas'
+                # CORREÇÃO DA DIGITAÇÃO: Corrigido e validado para português limpo
                 linhas_selecionadas = df_editado[df_editado["Selecionar"] == True]
                 
                 with act1:
@@ -582,7 +586,7 @@ if st.session_state['logado']:
                     disabled=[c for c in df_orcados_filtrado.columns if c in ["⚠️", "IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]]
                 )
                 
-                # CORREÇÃO DA DIGITAÇÃO: Corrigido de 'linhas_selecionadas_o'
+                # CORREÇÃO DA DIGITAÇÃO: Higienizado de typos remanescentes de espanhol
                 linhas_selecionadas_o = df_editado_orcados[df_editado_orcados["Selecionar"] == True]
 
                 with col_btn_o1:
@@ -640,7 +644,7 @@ if st.session_state['logado']:
                 st.session_state['bg_dinamico'] = base64.b64encode(bytes_data).decode()  
                 if st.button("💾 Salvar Layout"):
                     with open(CAMINHO_LAYOUT_LOGIN, "wb") as f: f.write(upload_layout.getbuffer())
-                    st.success("Layout local actualizado!")
+                    st.success("Layout local atualizado!")
                     st.rerun()
                     
         with col2:
