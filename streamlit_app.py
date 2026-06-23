@@ -158,6 +158,9 @@ def salvar_dados_na_nuvem(df, nome_aba):
         df_salvar = df.copy()
         if 'Situação' in df_salvar.columns:
             df_salvar['Situação'] = df_salvar['Situação'].map(lambda x: REVERSO_SITUACAO.get(str(x).strip(), x))
+        # Remove colunas auxiliares que não pertencem ao arquivo bruto do Sheets
+        if "Selecionar" in df_salvar.columns: del df_salvar["Selecionar"]
+        if "⚠️" in df_salvar.columns: del df_salvar["⚠️"]
         conn.update(worksheet=nome_aba, data=df_salvar)
     except Exception as e:
         st.error(f"Erro crítico ao salvar dados no Google Sheets: {e}")
@@ -413,6 +416,7 @@ if st.session_state['logado']:
             st.markdown("<div class='section-header'>⚙️ Ações</div>", unsafe_allow_html=True)
             
             if not df_orcar_filtrado.empty:
+                # TRAVA DE SEGURANÇA CONTRA DUPLICAÇÃO DE COLUNA NO RERUN (Evita StreamlitAPIException)
                 if "Selecionar" not in df_orcar_filtrado.columns:
                     df_orcar_filtrado.insert(0, "Selecionar", False)
                 act1, act2, act3 = st.columns(3)
@@ -580,12 +584,14 @@ if st.session_state['logado']:
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if not df_orcados_filtrado.empty:
-                alertas = []
-                for idx, row in df_orcados_filtrado.iterrows():
-                    if str(row.get('Situação', '')).strip() == 'Em Revisão':
-                        alertas.append("❗ REVISÃO")
-                    else: alertas.append("")
-                df_orcados_filtrado.insert(0, "⚠️", alertas)
+                # TRAVA DE SEGURANÇA COMPLEMENTAR: Injeta os alertas e caixas apenas se não existirem
+                if "⚠️" not in df_orcados_filtrado.columns:
+                    alertas = []
+                    for idx, row in df_orcados_filtrado.iterrows():
+                        if str(row.get('Situação', '')).strip() == 'Em Revisão':
+                            alertas.append("❗ REVISÃO")
+                        else: alertas.append("")
+                    df_orcados_filtrado.insert(0, "⚠️", alertas)
 
                 if "Selecionar" not in df_orcados_filtrado.columns:
                     df_orcados_filtrado.insert(0, "Selecionar", False)
@@ -593,8 +599,8 @@ if st.session_state['logado']:
                 st.markdown("<div class='section-header'>⚙️ Ações da Base de Orçados</div>", unsafe_allow_html=True)
                 col_btn_o1, col_btn_o2 = st.columns([1, 1])
                 
-                # DECLARAÇÃO DE VARIÁVEL GLOBAL (Corrige o erro de StreamlitAPIException de vez!)
-                colunas_bloqueadas = ["IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]
+                # Lista limpa das colunas de texto travadas sem caracteres problemáticos
+                colunas_bloqueadas = ["⚠️", "IdSolicitacao", "Situação", "Solicitado", "Previsto", "Iníciado", "Enviado", "Solicitação de Revisão", "Prazo Envio Revisão"]
                 
                 df_editado_orcados = st.data_editor(
                     df_orcados_filtrado,
