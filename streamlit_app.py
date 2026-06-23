@@ -23,7 +23,8 @@ ABA_PERDIDOS = "Perdidos"
 # =========================================================================
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
 # =========================================================================
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Forçamos o conector a buscar as configurações do gsheets salvas no Secrets
+conn = st.connection("gsheets", type=GSheetsConnection, connection_name="gsheets")
 
 # Inicialização segura das variáveis de sessão de login tradicionais
 if 'logado' not in st.session_state: 
@@ -39,13 +40,13 @@ if 'mensagem_sucesso_orcados' not in st.session_state:
 if 'exibir_dash_orcados' not in st.session_state:
     st.session_state['exibir_dash_orcados'] = False
 
-# Filtros e controles sequenciais (Aba Orçar)
+# Filtros e controles sequenciais (Aba Orcar)
 if 'filtro_orc_atual' not in st.session_state: st.session_state['filtro_orc_atual'] = []
 if 'filtro_rep_atual' not in st.session_state: st.session_state['filtro_rep_atual'] = []
 if 'filtro_item_atual' not in st.session_state: st.session_state['filtro_item_atual'] = []
 if 'busca_empresa_atual' not in st.session_state: st.session_state['busca_empresa_atual'] = ""
 
-# Filtros e controles sequenciais (Aba Orçados)
+# Filtros e controles sequenciais (Aba Orcados)
 if 'filtro_orc_orcados' not in st.session_state: st.session_state['filtro_orc_orcados'] = []
 if 'filtro_rep_orcados' not in st.session_state: st.session_state['filtro_rep_orcados'] = []
 if 'filtro_item_orcados' not in st.session_state: st.session_state['filtro_item_orcados'] = []
@@ -92,7 +93,8 @@ def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
         df = df.rename(columns=mapeamento)
         
         if 'IdSolicitacao' not in df.columns and not df.empty: df['IdSolicitacao'] = range(40774, 40774 + len(df))
-        if 'Situação' not in df.columns: df['Situação'] = 'Orçar' if tipo == "orcar" else 'Orçado'
+        # CORREÇÃO AQUI: Mudando valores padrões para os nomes sem acento
+        if 'Situação' not in df.columns: df['Situação'] = 'Orcar' if tipo == "orcar" else 'Orcados'
         if 'Empresa' not in df.columns: df['Empresa'] = 'NÃO DEFINIDO'
         if 'Representante' not in df.columns: df['Representante'] = 'S/rep'
         if 'Item' not in df.columns: df['Item'] = 'Componentes'
@@ -322,8 +324,9 @@ if st.session_state['logado']:
                 df_atual = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
                 proximo_id = int(pd.to_numeric(df_atual['IdSolicitacao'], errors='coerce').max()) + 1 if not df_atual.empty and 'IdSolicitacao' in df_atual.columns else 40774
                 
+                # CORREÇÃO AQUI: Situação guardada como 'Orcar' (sem acento) para alinhar com as abas
                 nova_linha = {
-                    "IdSolicitacao": proximo_id, "Situação": "Orçar", "Atraso": "No prazo",
+                    "IdSolicitacao": proximo_id, "Situação": "Orcar", "Atraso": "No prazo",
                     "Empresa": empresa_sol.strip().upper(), "Representante": rep_sol,
                     "Solicitado": data_sol.strftime('%d/%m/%Y'), "Previsto": previsao_entrega.strftime('%d/%m/%Y'),
                     "Iníciado": "None", "Orçamentista": str(orc_resp).strip().upper(),
@@ -348,10 +351,11 @@ if st.session_state['logado']:
         if st.session_state['mensagem_sucesso_orcar']:
             st.success(st.session_state['mensagem_sucesso_orcar'], icon="✅")
 
-        aba_orcar, aba_orcados, aba_perdidos = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORÇADOS", "❌ 3. Base PERDIDOS"])
+        # Ajustado os títulos das abas internas do painel
+        aba_orcar_tab, aba_orcados_tab, aba_perdidos_tab = st.tabs(["⏳ 1. Base ORCAR / ORCANDO", "✅ 2. Base ORCADOS", "❌ 3. Base PERDIDOS"])
         
-        # ABA 1: BASE ORÇAR / ORÇANDO
-        with aba_orcar:
+        # ABA 1: BASE ORCAR / ORCANDO
+        with aba_orcar_tab:
             st.markdown("<div class='section-header'>🔍 Filtro</div>", unsafe_allow_html=True)
             f1, f2, f3 = st.columns(3)
             with f1:
@@ -416,7 +420,8 @@ if st.session_state['logado']:
                                 id_sol = row["IdSolicitacao"]
                                 num_orc = f"ORC-26-{num_atual:06d}"
                                 lista_numeros_gerados.append(num_orc)
-                                st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Situação'] = 'Orçando'
+                                # CORREÇÃO AQUI: Mudado de 'Orçando' para 'Orcando' (limpando o acento)
+                                st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Situação'] = 'Orcando'
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Orçamento'] = num_orc
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Iníciado'] = datetime.today().strftime('%d/%m/%Y')
                                 num_atual += 1
@@ -449,7 +454,8 @@ if st.session_state['logado']:
                                 registro_original = st.session_state['df_orcar'][st.session_state['df_orcar']['IdSolicitacao'] == id_sol]
                                 if not registro_original.empty:
                                     reg = registro_original.iloc[0].to_dict()
-                                    reg['Situação'] = 'Orçado'
+                                    # CORREÇÃO AQUI: Mudado para 'Orcados' (sem acento)
+                                    reg['Situação'] = 'Orcados'
                                     reg['ValorTotal'] = row['ValorTotal']
                                     reg['Orçamento'] = row['Orçamento']
                                     reg['Enviado'] = datetime.today().strftime('%d/%m/%Y')
@@ -467,7 +473,7 @@ if st.session_state['logado']:
                         else: st.warning("Selecione um registro na caixinha.")
 
         # ABA 2: BASE ORÇADOS 
-        with aba_orcados:
+        with aba_orcados_tab:
             if st.session_state['mensagem_sucesso_orcados']:
                 st.success(st.session_state['mensagem_sucesso_orcados'], icon="✅")
                 st.session_state['mensagem_sucesso_orcados'] = None
@@ -562,7 +568,8 @@ if st.session_state['logado']:
             if not df_orcados_filtrado.empty:
                 alertas = []
                 for idx, row in df_orcados_filtrado.iterrows():
-                    if str(row.get('Situação', '')).strip().lower() == 'em revisão':
+                    # CORREÇÃO AQUI: Mudado para checar 'em revisao' (sem acento)
+                    if str(row.get('Situação', '')).strip().lower() == 'em revisao':
                         alertas.append("❗ REVISÃO")
                     else: alertas.append("")
                 df_orcados_filtrado.insert(0, "⚠️", alertas)
@@ -591,7 +598,8 @@ if st.session_state['logado']:
                             
                             for idx, row in linhas_selecionadas_o.iterrows():
                                 id_sol = row["IdSolicitacao"]
-                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Situação'] = 'Em Revisão'
+                                # CORREÇÃO AQUI: Situação atualizada para 'Em Revisao' (sem acento)
+                                st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Situação'] = 'Em Revisao'
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Solicitação de Revisão'] = hoje_str
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Prazo Envio Revisão'] = prazo_rev_str
                                 
@@ -615,7 +623,7 @@ if st.session_state['logado']:
                 st.info("Planilha 'Orçados' na nuvem vazia ou nenhum dado corresponde aos filtros.")
 
         # ABA 3: BASE PERDIDOS
-        with aba_perdidos:
+        with aba_perdidos_tab:
             if 'df_perdidos' in st.session_state and not st.session_state['df_perdidos'].empty: 
                 st.dataframe(st.session_state['df_perdidos'], use_container_width=True)
             else: st.info("Planilha 'Perdidos' na nuvem vazia.")
