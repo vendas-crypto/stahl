@@ -16,9 +16,9 @@ CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
 # Nomes exatos das abas de texto (idênticos ao Google Sheets para evitar HTTP 400/404)
-ABA_ORCAR = "Orcar"
-ABA_ORCADOS = "Orcados"
-ABA_PERDIDOS = "Perdidos"
+ABA_ORCAR = "0"
+ABA_ORCADOS = "1"
+ABA_PERDIDOS = "2"
 
 # =========================================================================
 # 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
