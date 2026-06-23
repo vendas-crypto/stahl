@@ -1,31 +1,29 @@
 import streamlit as st
 import pandas as pd
-import os
 import base64
 from datetime import datetime, timedelta
+# Importação da conexão nativa com o Google Sheets
+from streamlit_gsheets import GSheetsConnection
 
 # =========================================================================
-# 1. FORÇAR INSTALAÇÃO AUTOMÁTICA DO OPENPYXL CASO O SERVIDOR NÃO TENHA
-# =========================================================================
-try:
-    import openpyxl
-except ImportError:
-    import os
-    os.system('pip install openpyxl')
-
-# =========================================================================
-# 2. CONFIGURAÇÃO BASE DA PÁGINA
+# 1. CONFIGURAÇÃO BASE DA PÁGINA
 # =========================================================================
 st.set_page_config(page_title="STAHL CRM - Sistema Integrado", layout="wide", initial_sidebar_state="expanded")
 
-# Caminhos dos arquivos físicos no servidor (Estarão travados localmente via .gitignore)
+# Caminhos dos arquivos físicos de mídia (Imagens estáticas simples podem ficar no repositório do GitHub)
 CAMINHO_LOGO = "logo_stahl.png"
 CAMINHO_LAYOUT_LOGIN = "layout_login.png"
 
-# Os 3 arquivos separados para as suas bases reais
-ARQUIVO_ORCAR = "Orçar.xlsx"
-ARQUIVO_ORCADOS = "Orçados.xlsx"
-ARQUIVO_PERDIDOS = "perdidos.xlsx"
+# Nomes das abas/páginas exatas na sua planilha do Google Sheets na Nuvem
+ABA_ORCAR = "Orçar"
+ABA_ORCADOS = "Orçados"
+ABA_PERDIDOS = "Perdidos"
+
+# =========================================================================
+# 2. CONEXÃO COM O GOOGLE SHEETS (NUVEM)
+# =========================================================================
+# Cria o conector utilizando as credenciais salvas nos Secrets do Streamlit
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Inicialização segura das variáveis de sessão de login tradicionais
 if 'logado' not in st.session_state: 
@@ -73,78 +71,86 @@ def somar_dias_uteis(data_inicio, dias):
     return data_atual
 
 # =========================================================================
-# FUNÇÃO DE TRATAMENTO E LEITURA DOS EXCELS (COMPATIBILIZADA)
+# FUNÇÕES DE LEITURA E ESCRITA NA NUVEM (GOOGLE SHEETS)
 # =========================================================================
-def tratar_e_limpar_dataframe(caminho_arquivo, tipo="orcar"):
-    if os.path.exists(caminho_arquivo) and os.path.getsize(caminho_arquivo) > 0:
-        try:
-            df = pd.read_excel(caminho_arquivo)
-            df.columns = df.columns.astype(str).str.strip()
-            
-            mapeamento = {}
-            for col in df.columns:
-                if col.lower() in ['orçamentista', 'orcamentista']: mapeamento[col] = 'Orçamentista'
-                if col.lower() in ['idsolicitacao', 'id_solicitacao', 'id']: mapeamento[col] = 'IdSolicitacao'
-                if col.lower() in ['situação', 'situacao', 'status']: mapeamento[col] = 'Situação'
-                if col.lower() in ['empresa', 'cliente']: mapeamento[col] = 'Empresa'
-                if col.lower() in ['representante', 'rep']: mapeamento[col] = 'Representante'
-                if col.lower() in ['item', 'equipamento']: mapeamento[col] = 'Item'
-            df = df.rename(columns=mapeamento)
-            
-            if 'IdSolicitacao' not in df.columns: df['IdSolicitacao'] = range(40774, 40774 + len(df))
-            if 'Situação' not in df.columns: df['Situação'] = 'Orçar' if tipo == "orcar" else 'Orçado'
-            if 'Empresa' not in df.columns: df['Empresa'] = 'NÃO DEFINIDO'
-            if 'Representante' not in df.columns: df['Representante'] = 'S/rep'
-            if 'Item' not in df.columns: df['Item'] = 'Componentes'
-            
-            if 'Orçamentista' in df.columns:
-                df['Orçamentista'] = df['Orçamentista'].astype(str).str.strip().str.upper().replace('NAN', 'Não Definido')
-            else:
-                df['Orçamentista'] = 'Não Definido'
-            
-            if tipo == "orcar":
-                if 'Orçamento' not in df.columns: df['Orçamento'] = 'None'
-                if 'ValorTotal' not in df.columns: df['ValorTotal'] = 0.0
-                if 'Atraso' not in df.columns: df['Atraso'] = 'No prazo'
-                
-                hoje = datetime.today().date()
-                atrasos_calculados = []
-                for idx, row in df.iterrows():
-                    try:
-                        if 'Previsto' in df.columns and pd.notna(row['Previsto']):
-                            data_prev_str = str(row['Previsto']).split(' ')[0]
-                            if '/' in data_prev_str: data_prev = datetime.strptime(data_prev_str, '%d/%m/%Y').date()
-                            else: data_prev = pd.to_datetime(data_prev_str).date()
-                            
-                            if hoje > data_prev:
-                                atrasos_calculados.append(f"{(hoje - data_prev).days} dias")
-                            else: atrasos_calculados.append("No prazo")
-                        else:
-                            atrasos_calculados.append("No prazo")
-                    except Exception: atrasos_calculados.append("No prazo")
-                df['Atraso'] = atrasos_calculados
-
-            # Colunas adicionais específicas para controle de revisões na base de Orçados
-            if tipo == "orcados":
-                if 'Solicitação de Revisão' not in df.columns: df['Solicitação de Revisão'] = 'None'
-                if 'Prazo Envio Revisão' not in df.columns: df['Prazo Envio Revisão'] = 'None'
-
-            for col in df.columns:
-                if col in ['Solicitado', 'Previsto', 'Iníciado', 'Enviado', 'Solicitação de Revisão', 'Prazo Envio Revisão']:
-                    df[col] = df[col].astype(str).str.replace(' 00:00:00', '', regex=False).replace('nan', 'None').replace('NaT', 'None')
-            return df
-        except Exception as e: 
-            st.error(f"Erro ao processar as colunas do Excel: {e}")
+def carregar_dados_da_nuvem(nome_aba, tipo="orcar"):
+    try:
+        # Lê a aba específica diretamente do Google Sheets
+        df = conn.read(worksheet=nome_aba, ttl=0) # ttl=0 força buscar o dado mais recente sem cache
+        if df is None or df.empty:
             return pd.DataFrame([])
-    return pd.DataFrame([])
+            
+        df.columns = df.columns.astype(str).str.strip()
+        
+        mapeamento = {}
+        for col in df.columns:
+            if col.lower() in ['orçamentista', 'orcamentista']: mapeamento[col] = 'Orçamentista'
+            if col.lower() in ['idsolicitacao', 'id_solicitacao', 'id']: mapeamento[col] = 'IdSolicitacao'
+            if col.lower() in ['situação', 'situacao', 'status']: mapeamento[col] = 'Situação'
+            if col.lower() in ['empresa', 'cliente']: mapeamento[col] = 'Empresa'
+            if col.lower() in ['representante', 'rep']: mapeamento[col] = 'Representante'
+            if col.lower() in ['item', 'equipamento']: mapeamento[col] = 'Item'
+        df = df.rename(columns=mapeamento)
+        
+        if 'IdSolicitacao' not in df.columns and not df.empty: df['IdSolicitacao'] = range(40774, 40774 + len(df))
+        if 'Situação' not in df.columns: df['Situação'] = 'Orçar' if tipo == "orcar" else 'Orçado'
+        if 'Empresa' not in df.columns: df['Empresa'] = 'NÃO DEFINIDO'
+        if 'Representante' not in df.columns: df['Representante'] = 'S/rep'
+        if 'Item' not in df.columns: df['Item'] = 'Componentes'
+        
+        if 'Orçamentista' in df.columns:
+            df['Orçamentista'] = df['Orçamentista'].astype(str).str.strip().str.upper().replace('NAN', 'Não Definido')
+        else:
+            df['Orçamentista'] = 'Não Definido'
+        
+        if tipo == "orcar" and not df.empty:
+            if 'Orçamento' not in df.columns: df['Orçamento'] = 'None'
+            if 'ValorTotal' not in df.columns: df['ValorTotal'] = 0.0
+            if 'Atraso' not in df.columns: df['Atraso'] = 'No prazo'
+            
+            hoje = datetime.today().date()
+            atrasos_calculados = []
+            for idx, row in df.iterrows():
+                try:
+                    if 'Previsto' in df.columns and pd.notna(row['Previsto']):
+                        data_prev_str = str(row['Previsto']).split(' ')[0]
+                        if '/' in data_prev_str: data_prev = datetime.strptime(data_prev_str, '%d/%m/%Y').date()
+                        else: data_prev = pd.to_datetime(data_prev_str).date()
+                        
+                        if hoje > data_prev:
+                            atrasos_calculados.append(f"{(hoje - data_prev).days} dias")
+                        else: atrasos_calculados.append("No prazo")
+                    else:
+                        atrasos_calculados.append("No prazo")
+                except Exception: atrasos_calculados.append("No prazo")
+            df['Atraso'] = atrasos_calculados
 
-# Leitura inicial das bases de dados
+        if tipo == "orcados" and not df.empty:
+            if 'Solicitação de Revisão' not in df.columns: df['Solicitação de Revisão'] = 'None'
+            if 'Prazo Envio Revisão' not in df.columns: df['Prazo Envio Revisão'] = 'None'
+
+        for col in df.columns:
+            if col in ['Solicitado', 'Previsto', 'Iníciado', 'Enviado', 'Solicitação de Revisão', 'Prazo Envio Revisão']:
+                df[col] = df[col].astype(str).str.replace(' 00:00:00', '', regex=False).replace('nan', 'None').replace('NaT', 'None')
+        return df
+    except Exception as e: 
+        st.error(f"Erro ao processar dados da nuvem ({nome_aba}): {e}")
+        return pd.DataFrame([])
+
+def salvar_dados_na_nuvem(df, nome_aba):
+    try:
+        # Envia e atualiza o DataFrame diretamente na nuvem
+        conn.update(worksheet=nome_aba, data=df)
+    except Exception as e:
+        st.error(f"Erro crítico ao salvar dados no Google Sheets: {e}")
+
+# Leitura inicial das bases de dados (Direto da Nuvem)
 if 'df_orcar' not in st.session_state or st.session_state['df_orcar'].empty:
-    st.session_state['df_orcar'] = tratar_e_limpar_dataframe(ARQUIVO_ORCAR, "orcar")
+    st.session_state['df_orcar'] = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
 if 'df_orcados' not in st.session_state or st.session_state['df_orcados'].empty:
-    st.session_state['df_orcados'] = tratar_e_limpar_dataframe(ARQUIVO_ORCADOS, "orcados")
+    st.session_state['df_orcados'] = carregar_dados_da_nuvem(ABA_ORCADOS, "orcados")
 if 'df_perdidos' not in st.session_state or st.session_state['df_perdidos'].empty:
-    st.session_state['df_perdidos'] = tratar_e_limpar_dataframe(ARQUIVO_PERDIDOS, "perdidos")
+    st.session_state['df_perdidos'] = carregar_dados_da_nuvem(ABA_PERDIDOS, "perdidos")
 
 # --- CARREGAMENTO DO BACKGROUND ---
 if not st.session_state['logado']:
@@ -186,7 +192,6 @@ estilo_css = """
         }
         div.stButton > button:first-child:hover { background-color: #FFFFFF !important; color: #00205B !important; border: 2px solid #FFFFFF !important; transform: scale(1.02); }
         
-        /* Métrica em destaque para o Dashboard */
         .metric-card {
             background-color: #FFFFFF;
             padding: 15px;
@@ -199,7 +204,6 @@ estilo_css = """
 """
 st.markdown(estilo_css, unsafe_allow_html=True)
 
-# Definições das Regras de Negócio da Stahl
 EQUIPAMENTOS_DB = {
     "Complemento Of": 2, "Componentes": 5, "Estimativa": 4, "Guindaste Especial": 5, 
     "Guindaste Giratório": 5, "Guindaste Smalljib": 5, "Monovia": 5, "Pacote de Equipamentos": 10,
@@ -215,7 +219,7 @@ LISTA_ORCAMENTISTAS_CADASTRO = ["LF", "RS", "JV", "REP", "Não Definido"]
 USUARIOS_DB = {"thamires": {"nome": "Thamires Martins", "sigla": "TM", "perfil": "administrador"}}
 
 # =========================================================================
-# BARRA LATERAL - AJUSTE DE SEGURANÇA CONTRA FALHAS DO LOGO
+# BARRA LATERAL
 # =========================================================================
 with st.sidebar:
     if os.path.exists(CAMINHO_LOGO): 
@@ -307,7 +311,7 @@ if st.session_state['logado']:
         if st.button("Gravar Solicitação no Banco de Dados 🚀"):
             if not empresa_sol.strip(): st.error("Por favor, preencha a Razão Social da Empresa.")
             else:
-                df_atual = tratar_e_limpar_dataframe(ARQUIVO_ORCAR, "orcar")
+                df_atual = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
                 proximo_id = int(pd.to_numeric(df_atual['IdSolicitacao'], errors='coerce').max()) + 1 if not df_atual.empty and 'IdSolicitacao' in df_atual.columns else 40774
                 
                 nova_linha = {
@@ -322,9 +326,12 @@ if st.session_state['logado']:
                 }
                 
                 df_final = pd.concat([df_atual, pd.DataFrame([nova_linha])], ignore_index=True)
-                df_final.to_excel(ARQUIVO_ORCAR, index=False)
+                
+                # Salva na Nuvem
+                salvar_dados_na_nuvem(df_final, ABA_ORCAR)
+                
                 st.session_state['df_orcar'] = df_final
-                st.session_state['mensagem_sucesso_orcar'] = f"✅ Gravado com Sucesso! ID: {proximo_id}"
+                st.session_state['mensagem_sucesso_orcar'] = f"✅ Gravado com Sucesso na Nuvem! ID: {proximo_id}"
                 st.rerun()
 
     # --- TELA DE VISÃO GERAL ---
@@ -336,9 +343,7 @@ if st.session_state['logado']:
 
         aba_orcar, aba_orcados, aba_perdidos = st.tabs(["⏳ 1. Base ORÇAR / ORÇANDO", "✅ 2. Base ORÇADOS", "❌ 3. Base PERDIDOS"])
         
-        # =========================================================================
         # ABA 1: BASE ORÇAR / ORÇANDO
-        # =========================================================================
         with aba_orcar:
             st.markdown("<div class='section-header'>🔍 Filtro</div>", unsafe_allow_html=True)
             f1, f2, f3 = st.columns(3)
@@ -393,7 +398,6 @@ if st.session_state['logado']:
                     disabled=[c for c in df_orcar_filtrado.columns if c in ["IdSolicitacao", "Situação", "Atraso", "Solicitado", "Previsto"]]
                 )
                 
-                # --- AQUI ESTAVA O SEU ERRO CORRIGIDO (linhas_selecionadas com 'h') ---
                 linhas_selecionadas = df_editado[df_editado["Selecionar"] == True]
                 
                 with act1:
@@ -410,8 +414,11 @@ if st.session_state['logado']:
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, 'Iníciado'] = datetime.today().strftime('%d/%m/%Y')
                                 num_atual += 1
                             st.session_state['proximo_numero_orc'] = num_atual
-                            st.session_state['df_orcar'].to_excel(ARQUIVO_ORCAR, index=False)
-                            st.session_state['mensagem_sucesso_orcar'] = f"Orçamento Iniciado com Sucesso! {', '.join(lista_numeros_gerados)}"
+                            
+                            # Salva Atualização na Nuvem
+                            salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
+                            
+                            st.session_state['mensagem_sucesso_orcar'] = f"Orçamento Iniciado na Nuvem! {', '.join(lista_numeros_gerados)}"
                             st.rerun()
                         else: st.warning("Selecione um registro na caixinha.")
                         
@@ -423,8 +430,11 @@ if st.session_state['logado']:
                                 val = row[col]
                                 if col == 'Orçamentista': val = str(val).strip().upper()
                                 st.session_state['df_orcar'].loc[st.session_state['df_orcar']['IdSolicitacao'] == id_sol, col] = val
-                        st.session_state['df_orcar'].to_excel(ARQUIVO_ORCAR, index=False)
-                        st.session_state['mensagem_sucesso_orcar'] = "Alterações salvas com sucesso na planilha!"
+                        
+                        # Salva Modificações na Nuvem
+                        salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
+                        
+                        st.session_state['mensagem_sucesso_orcar'] = "Alterações salvas com sucesso no Google Sheets!"
                         st.rerun()
                         
                 with act3:
@@ -445,15 +455,16 @@ if st.session_state['logado']:
                                     st.session_state['df_orcados'] = pd.concat([st.session_state['df_orcados'], pd.DataFrame([reg])], ignore_index=True)
                                     indices_para_remover.append(id_sol)
                             st.session_state['df_orcar'] = st.session_state['df_orcar'][~st.session_state['df_orcar']['IdSolicitacao'].isin(indices_para_remover)]
-                            st.session_state['df_orcar'].to_excel(ARQUIVO_ORCAR, index=False)
-                            st.session_state['df_orcados'].to_excel(ARQUIVO_ORCADOS, index=False)
-                            st.session_state['mensagem_sucesso_orcar'] = "Transferido para a base de Orçados com sucesso!"
+                            
+                            # Atualiza as duas abas na Nuvem simultaneamente
+                            salvar_dados_na_nuvem(st.session_state['df_orcar'], ABA_ORCAR)
+                            salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
+                            
+                            st.session_state['mensagem_sucesso_orcar'] = "Transferido para a base de Orçados na Nuvem com sucesso!"
                             st.rerun()
                         else: st.warning("Selecione um registro na caixinha.")
 
-        # =========================================================================
         # ABA 2: BASE ORÇADOS 
-        # =========================================================================
         with aba_orcados:
             if st.session_state['mensagem_sucesso_orcados']:
                 st.success(st.session_state['mensagem_sucesso_orcados'], icon="✅")
@@ -461,9 +472,6 @@ if st.session_state['logado']:
 
             df_orcados_raw = st.session_state['df_orcados'].copy() if 'df_orcados' in st.session_state and not st.session_state['df_orcados'].empty else pd.DataFrame([])
 
-            # -----------------------------------------------------------------
-            # FILTROS DA CARTEIRA DE ORÇADOS
-            # -----------------------------------------------------------------
             st.markdown("<div class='section-header'>🔍 Filtros da Carteira de Orçados</div>", unsafe_allow_html=True)
             fo1, fo2, fo3 = st.columns(3)
             with fo1:
@@ -495,17 +503,11 @@ if st.session_state['logado']:
                 if st.session_state['busca_empresa_orcados']:
                     df_orcados_filtrado = df_orcados_filtrado[df_orcados_filtrado['Empresa'].astype(str).str.contains(st.session_state['busca_empresa_orcados'], case=False, na=False)]
 
-            # -----------------------------------------------------------------
-            # BOTÃO DO DASHBOARD (RETRAÍVEL)
-            # -----------------------------------------------------------------
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("📊 Abrir / Fechar Dashboard de Performance", key="btn_toggle_dash"):
                 st.session_state['exibir_dash_orcados'] = not st.session_state['exibir_dash_orcados']
                 st.rerun()
 
-            # -----------------------------------------------------------------
-            # ÁREA DO DASHBOARD (MÉTRICAS)
-            # -----------------------------------------------------------------
             if st.session_state['exibir_dash_orcados'] and not df_orcados_filtrado.empty:
                 st.markdown("<div style='background-color: #F1F3F5; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>", unsafe_allow_html=True)
                 st.markdown("### 📊 Indicadores de Performance - Filtrados")
@@ -555,9 +557,6 @@ if st.session_state['logado']:
                     st.info("Nenhum orçamento enviado com esse critério no intervalo selecionado.")
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # -----------------------------------------------------------------
-            # TABELA DA CARTEIRA E SUAS AÇÕES
-            # -----------------------------------------------------------------
             if not df_orcados_filtrado.empty:
                 alertas = []
                 for idx, row in df_orcados_filtrado.iterrows():
@@ -594,8 +593,10 @@ if st.session_state['logado']:
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Solicitação de Revisão'] = hoje_str
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, 'Prazo Envio Revisão'] = prazo_rev_str
                                 
-                            st.session_state['df_orcados'].to_excel(ARQUIVO_ORCADOS, index=False)
-                            st.session_state['mensagem_sucesso_orcados'] = f"Revisão aberta com sucesso! Prazo de envio definido para: {prazo_rev_str}"
+                            # Salva na Nuvem
+                            salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
+                            
+                            st.session_state['mensagem_sucesso_orcados'] = f"Revisão aberta com sucesso na nuvem! Prazo de envio: {prazo_rev_str}"
                             st.rerun()
                         else: st.warning("Selecione um orçamento na caixinha para abrir a revisão.")
 
@@ -606,19 +607,20 @@ if st.session_state['logado']:
                             for col in [c for c in df_editado_orcados.columns if c not in ["Selecionar", "⚠️"]]:
                                 val = row[col]
                                 st.session_state['df_orcados'].loc[st.session_state['df_orcados']['IdSolicitacao'] == id_sol, col] = val
-                        st.session_state['df_orcados'].to_excel(ARQUIVO_ORCADOS, index=False)
-                        st.session_state['mensagem_sucesso_orcados'] = "Alterações de Orçados salvas com sucesso!"
+                        
+                        # Salva na Nuvem
+                        salvar_dados_na_nuvem(st.session_state['df_orcados'], ABA_ORCADOS)
+                        
+                        st.session_state['mensagem_sucesso_orcados'] = "Alterações de Orçados salvas com sucesso na nuvem!"
                         st.rerun()
             else:
-                st.info("Planilha 'Orçados.xlsx' vazia ou nenhum dado corresponde aos filtros do topo.")
+                st.info("Planilha 'Orçados' na nuvem vazia ou nenhum dado corresponde aos filtros.")
 
-        # =========================================================================
         # ABA 3: BASE PERDIDOS
-        # =========================================================================
         with aba_perdidos:
             if 'df_perdidos' in st.session_state and not st.session_state['df_perdidos'].empty: 
                 st.dataframe(st.session_state['df_perdidos'], use_container_width=True)
-            else: st.info("Planilha 'perdidos.xlsx' vazia.")
+            else: st.info("Planilha 'Perdidos' na nuvem vazia.")
 
     # --- CONFIGURAÇÃO ---
     elif menu == "⚙️ Configurações":
@@ -638,30 +640,33 @@ if st.session_state['logado']:
                 st.session_state['bg_dinamico'] = base64.b64encode(bytes_data).decode()  
                 if st.button("💾 Salvar Layout"):
                     with open(CAMINHO_LAYOUT_LOGIN, "wb") as f: f.write(upload_layout.getbuffer())
-                    st.success("Layout updated!")
+                    st.success("Layout local atualizado!")
                     st.rerun()
                     
         with col2:
-            st.markdown("<div class='section-header'>📂 Carga de Bancos de Dados (.xlsx)</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-header'>📂 Sincronização e Carga Manual Directa (Nuvem)</div>", unsafe_allow_html=True)
+            st.caption("Ao fazer o upload aqui, você sobrescreve os dados atuais do Google Sheets na nuvem.")
             
-            up_orcar = st.file_uploader("1. Atualizar Planilha de ORÇAR (Orçar.xlsx):", type=['xlsx'])
-            if up_orcar is not None and st.button("💾 Salvar Planilha de ORÇAR"):
-                with open(ARQUIVO_ORCAR, "wb") as f: f.write(up_orcar.getbuffer())
-                if "editor_orcar_real" in st.session_state: del st.session_state["editor_orcar_real"]
-                st.session_state['df_orcar'] = tratar_e_limpar_dataframe(ARQUIVO_ORCAR, "orcar")
-                st.success("Base activa de Orçar updated!")
+            up_orcar = st.file_uploader("1. Forçar Atualização Planilha de ORÇAR:", type=['xlsx'])
+            if up_orcar is not None and st.button("🚀 Enviar para o Google Sheets (Orçar)"):
+                df_upload = pd.read_excel(up_orcar)
+                salvar_dados_na_nuvem(df_upload, ABA_ORCAR)
+                st.session_state['df_orcar'] = carregar_dados_da_nuvem(ABA_ORCAR, "orcar")
+                st.success("Base ativa de Orçar atualizada na nuvem!")
                 st.rerun()
 
-            up_orcados = st.file_uploader("2. Atualizar Planilha de ORCADOS (Orçados.xlsx):", type=['xlsx'])
-            if up_orcados is not None and st.button("💾 Salvar Planilha de ORÇADOS"):
-                with open(ARQUIVO_ORCADOS, "wb") as f: f.write(up_orcados.getbuffer())
-                st.session_state['df_orcados'] = tratar_e_limpar_dataframe(ARQUIVO_ORCADOS, "orcados")
-                st.success("Base de Orçados salva!")
+            up_orcados = st.file_uploader("2. Forçar Atualização Planilha de ORCADOS:", type=['xlsx'])
+            if up_orcados is not None and st.button("🚀 Enviar para o Google Sheets (Orçados)"):
+                df_upload = pd.read_excel(up_orcados)
+                salvar_dados_na_nuvem(df_upload, ABA_ORCADOS)
+                st.session_state['df_orcados'] = carregar_dados_da_nuvem(ABA_ORCADOS, "orcados")
+                st.success("Base de Orçados atualizada na nuvem!")
                 st.rerun()
 
-            up_perdidos = st.file_uploader("3. Atualizar Planilha de PERDIDOS (perdidos.xlsx):", type=['xlsx'])
-            if up_perdidos is not None and st.button("💾 Salvar Planilha de PERDIDOS"):
-                with open(ARQUIVO_PERDIDOS, "wb") as f: f.write(up_perdidos.getbuffer())
-                st.session_state['df_perdidos'] = tratar_e_limpar_dataframe(ARQUIVO_PERDIDOS, "perdidos")
-                st.success("Base de Perdidos salva!")
+            up_perdidos = st.file_uploader("3. Forçar Atualização Planilha de PERDIDOS:", type=['xlsx'])
+            if up_perdidos is not None and st.button("🚀 Enviar para o Google Sheets (Perdidos)"):
+                df_upload = pd.read_excel(up_perdidos)
+                salvar_dados_na_nuvem(df_upload, ABA_PERDIDOS)
+                st.session_state['df_perdidos'] = carregar_dados_da_nuvem(ABA_PERDIDOS, "perdidos")
+                st.success("Base de Perdidos atualizada na nuvem!")
                 st.rerun()
